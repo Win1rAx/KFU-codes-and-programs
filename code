@@ -1,0 +1,220 @@
+# -*- coding: utf-8 -*-
+"""
+Created on Thu May 22 00:10:47 2025
+
+@author: Wintr
+"""
+import tkinter as tk
+from tkinter import ttk, messagebox
+import random
+import math
+
+'''def is_prime(n):
+    if n < 2:
+        return False
+    for p in [2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31]:
+        if n % p == 0:
+            return n == p
+    return True"
+'''
+
+def binary_expansion(e):
+    """Функция для преобразования числа в двоичное представление"""
+    # Преобразуем число в двоичную строку (начинается с '0b'), берем часть после '0b'
+    # Каждый символ преобразуем в int, получаем список битов (старший бит первый)
+    return [int(bit) for bit in bin(e)[2:]]
+
+def power_mod(a, b, n):
+    b = binary_expansion(b)
+    result = 1
+    for bit in b:
+        # Возводим в квадрат по модулю n (основная операция алгоритма)
+        result = (result * result) % n
+        # Если бит равен 1, умножаем на основание a по модулю n
+        if bit == 1:
+            result = (result * a) % n
+    return result
+
+
+def fermat_test(n, iterations):
+    """Тест Ферма на простоту."""
+    if n < 2:
+        return False
+    if n == 2 or n == 3:  # Добавляем проверку для n=2 и n=3
+        return True
+    for _ in range(iterations):
+        a = random.randint(2, n - 1)
+        if pow(a, n - 1, n) != 1:
+            return False
+    return True
+
+def jacobi_symbol(a, n):
+    if n < 0 or n % 2 == 0:
+        return 0
+    a = a % n
+    result = 1
+    while a != 0:
+        while a % 2 == 0:
+            a = a // 2
+            mod = n % 8
+            if mod == 3 or mod == 5:
+                result = -result
+        a, n = n, a
+        if a % 4 == 3 and n % 4 == 3:
+            result = -result
+        a = a % n
+    if n == 1:
+        return result
+    else:
+        return 0
+
+def solovay_strassen_test(n, iterations):
+    """Тест Соловея-Штрассена на простоту."""
+    if n < 2:
+        return False
+    if n == 2 or n == 3:  # Добавляем проверку для n=2 и n=3
+        return True
+    if n % 2 == 0:
+        return False
+    for _ in range(iterations):
+        a = random.randint(2, n - 1)
+        x = pow(a, (n - 1) // 2, n)
+        if x == 0:
+            return False
+        if x != 1 and x != n - 1:
+            return False
+        jacobi = jacobi_symbol(a, n)
+        if x != jacobi % n:
+            return False
+    return True
+
+def miller_rabin_test(n, iterations):
+    """Тест Миллера-Рабина на простоту."""
+    if n < 2:
+        return False
+    if n == 2 or n == 3:  # Добавляем проверку для n=2 и n=3
+        return True
+    if n % 2 == 0:
+        return False
+    d = n - 1
+    s = 0
+    while d % 2 == 0:
+        d //= 2
+        s += 1
+    for _ in range(iterations):
+        a = random.randint(2, n - 1)
+        x = pow(a, d, n)
+        if x == 1 or x == n - 1:
+            continue
+        for __ in range(s - 1):
+            x = pow(x, 2, n)
+            if x == n - 1:
+                break
+        else:
+            return False
+    return True
+
+def run_tests():
+    try:
+        n = int(entry_n.get())
+        k = int(entry_k.get())
+    except ValueError:
+        messagebox.showerror("Ошибка", "Введите корректные числа")
+        return
+    
+    if n <= 1 or k <= 0:
+        messagebox.showerror("Ошибка", "n должно быть > 1, k должно быть > 0")
+        return
+    
+    max_candidates = min(n, 1000000000000000000000000000000)  # Ограничиваем количество кандидатов для производительности
+    candidates = list(range(2, max_candidates + 1))
+    
+    # Тест Ферма
+    fermat_primes = [c for c in candidates if fermat_test(c, k)]
+    update_table(table_fermat, fermat_primes)
+    
+    # Тест Соловея-Штрассена
+    solovay_primes = [c for c in fermat_primes if solovay_strassen_test(c, k)]
+    update_table(table_solovay, solovay_primes)
+    
+    # Тест Миллера-Рабина
+    miller_primes = [c for c in solovay_primes if miller_rabin_test(c, k)]
+    update_table(table_miller, miller_primes)
+    
+    # Разница между Ферма и Соловеем
+    diff_fermat_solovay = list(set(fermat_primes) - set(solovay_primes)) + list(set(solovay_primes) - set(fermat_primes))
+    label_diff_fermat_solovay.config(text=f"Числа только в Ферма или только в Соловее: {sorted(diff_fermat_solovay)}")
+    
+    # Разница между всеми тремя
+    diff_all = list(set(fermat_primes) - set(miller_primes)) + list(set(solovay_primes) - set(miller_primes))
+    label_diff_all.config(text=f"Числа в Ферма или Соловее, но не в Миллере: {sorted(diff_all)}")
+
+def update_table(table, data):
+    for row in table.get_children():
+        table.delete(row)
+    for i, num in enumerate(data):
+        table.insert("", "end", values=(i + 1, num))
+
+# Создание графического интерфейса
+root = tk.Tk()
+root.title("Тесты простоты чисел")
+root.geometry("1000x800")
+
+frame_input = tk.Frame(root)
+frame_input.pack(pady=10)
+
+tk.Label(frame_input, text="Число n:").grid(row=0, column=0, padx=5)
+entry_n = tk.Entry(frame_input)
+entry_n.grid(row=0, column=1, padx=5)
+
+tk.Label(frame_input, text="Количество итераций k:").grid(row=0, column=2, padx=5)
+entry_k = tk.Entry(frame_input)
+entry_k.grid(row=0, column=3, padx=5)
+
+button_run = tk.Button(frame_input, text="Запустить тесты", command=run_tests)
+button_run.grid(row=0, column=4, padx=5)
+
+# Таблица Ферма
+frame_fermat = tk.Frame(root)
+frame_fermat.pack(pady=10)
+tk.Label(frame_fermat, text="Тест Ферма", font=('Arial', 12, 'bold')).pack()
+
+columns = ("№", "Число")
+table_fermat = ttk.Treeview(frame_fermat, columns=columns, show="headings", height=5)
+table_fermat.heading("№", text="№")
+table_fermat.heading("Число", text="Число")
+table_fermat.column("№", width=50)
+table_fermat.column("Число", width=1000)
+table_fermat.pack()
+
+# Таблица Соловея-Штрассена
+frame_solovay = tk.Frame(root)
+frame_solovay.pack(pady=10)
+tk.Label(frame_solovay, text="Тест Соловея-Штрассена", font=('Arial', 12, 'bold')).pack()
+
+table_solovay = ttk.Treeview(frame_solovay, columns=columns, show="headings", height=5)
+table_solovay.heading("№", text="№")
+table_solovay.heading("Число", text="Число")
+table_solovay.column("№", width=50)
+table_solovay.column("Число", width=1000)
+table_solovay.pack()
+
+label_diff_fermat_solovay = tk.Label(root, text="", wraplength=900)
+label_diff_fermat_solovay.pack()
+
+# Таблица Миллера-Рабина
+frame_miller = tk.Frame(root)
+frame_miller.pack(pady=10)
+tk.Label(frame_miller, text="Тест Миллера-Рабина", font=('Arial', 12, 'bold')).pack()
+
+table_miller = ttk.Treeview(frame_miller, columns=columns, show="headings", height=5)
+table_miller.heading("№", text="№")
+table_miller.heading("Число", text="Число")
+table_miller.column("№", width=50)
+table_miller.column("Число", width=1000)
+table_miller.pack()
+
+label_diff_all = tk.Label(root, text="", wraplength=900)
+label_diff_all.pack()
+
+root.mainloop()
