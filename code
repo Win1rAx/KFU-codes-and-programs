@@ -1,220 +1,517 @@
+#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Created on Thu May 22 00:10:47 2025
+Created on Thu May 22 17:33:53 2025
 
-@author: Wintr
+@author: aleksejmaslov
 """
+
 import tkinter as tk
 from tkinter import ttk, messagebox
 import random
 import math
+from threading import Thread
+from queue import Queue
 
-'''def is_prime(n):
-    if n < 2:
-        return False
-    for p in [2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31]:
-        if n % p == 0:
-            return n == p
-    return True"
-'''
+class PrimeTesterApp:
+    def __init__(self, root):
+        # Инициализация главного окна приложения
+        self.root = root
+        self.root.title("Тесты простоты чисел (оптимизированная версия)")
+        self.root.geometry("1200x800")  # Установка размеров окна
+        
+        # Очередь для безопасного обновления GUI из фонового потока
+        self.gui_queue = Queue()
+        
+        # Создание виджетов интерфейса
+        self.create_widgets()
+        # Запуск проверки очереди обновлений
+        self.check_queue()
 
-def binary_expansion(e):
-    """Функция для преобразования числа в двоичное представление"""
-    # Преобразуем число в двоичную строку (начинается с '0b'), берем часть после '0b'
-    # Каждый символ преобразуем в int, получаем список битов (старший бит первый)
-    return [int(bit) for bit in bin(e)[2:]]
+    def create_widgets(self):
+        """Создание элементов интерфейса"""
+        # Основной фрейм с прокруткой
+        self.main_frame = tk.Frame(self.root)
+        self.main_frame.pack(fill=tk.BOTH, expand=True)
 
-def power_mod(a, b, n):
-    b = binary_expansion(b)
-    result = 1
-    for bit in b:
-        # Возводим в квадрат по модулю n (основная операция алгоритма)
-        result = (result * result) % n
-        # Если бит равен 1, умножаем на основание a по модулю n
-        if bit == 1:
-            result = (result * a) % n
-    return result
+        # Canvas для реализации прокрутки
+        self.canvas = tk.Canvas(self.main_frame)
+        self.canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+        # Вертикальный скроллбар
+        self.scrollbar = ttk.Scrollbar(self.main_frame, orient=tk.VERTICAL, command=self.canvas.yview)
+        self.scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+
+        # Настройка прокрутки
+        self.canvas.configure(yscrollcommand=self.scrollbar.set)
+        self.canvas.bind('<Configure>', lambda e: self.canvas.configure(scrollregion=self.canvas.bbox("all")))
+
+        # Фрейм для содержимого внутри canvas
+        self.content_frame = tk.Frame(self.canvas)
+        self.canvas.create_window((0, 0), window=self.content_frame, anchor="nw")
+
+        # Создание блока с полями ввода
+        self.create_input_fields()
+        # Создание прогресс-бара
+        self.create_progress_bar()
+        # Создание таблиц результатов
+        self.create_result_tables()
+        # Настройка прокрутки колесом мыши
+        self.setup_mouse_scroll()
+
+    def create_input_fields(self):
+        """Создание полей и кнопки"""
+        self.frame_input = tk.Frame(self.content_frame)
+        self.frame_input.pack(pady=10)
+
+        # Поле ввода для максимального числа
+        tk.Label(self.frame_input, text="Максимальное число n:").grid(row=0, column=0, padx=5)
+        self.entry_n = tk.Entry(self.frame_input)
+        self.entry_n.grid(row=0, column=1, padx=5)
+
+        # Поле ввода для количества итераций
+        tk.Label(self.frame_input, text="Количество итераций k:").grid(row=0, column=2, padx=5)
+        self.entry_k = tk.Entry(self.frame_input)
+        self.entry_k.grid(row=0, column=3, padx=5)
+
+        # Кнопка запуска тестов
+        self.button_run = tk.Button(self.frame_input, text="Запустить тесты", command=self.start_test_thread)
+        self.button_run.grid(row=0, column=4, padx=5)
+
+    def create_progress_bar(self):
+        """Создание прогресс-бара"""
+        self.progress = ttk.Progressbar(self.content_frame, orient=tk.HORIZONTAL, length=500, mode='determinate')
+        self.progress.pack(pady=10)
+
+    def create_result_tables(self):
+        """Создание таблиц"""
+        # Таблица для теста Ферма
+        self.create_table(
+            frame_name="frame_fermat",
+            title="Тест Ферма",
+            table_name="table_fermat",
+            label_name="label_fermat_count"
+        )
+        
+        # Таблица для теста Соловея-Штрассена
+        self.create_table(
+            frame_name="frame_solovay",
+            title="Тест Соловея-Штрассена",
+            table_name="table_solovay",
+            label_name="label_solovay_count"
+        )
+        
+        # Таблица для теста Миллера-Рабина
+        self.create_table(
+            frame_name="frame_miller",
+            title="Тест Миллера-Рабина",
+            table_name="table_miller",
+            label_name="label_miller_count"
+        )
+        
+        # Текстовое поле для вывода различий и статистики
+        self.create_diff_text_field()
+
+    def create_table(self, frame_name, title, table_name, label_name):
+        """Создание одной таблицы результатов"""
+        # Фрейм для таблицы
+        setattr(self, frame_name, tk.Frame(self.content_frame))
+        frame = getattr(self, frame_name)
+        frame.pack(pady=10, fill=tk.X)
+        
+        # Заголовок таблицы
+        tk.Label(frame, text=title, font=('Arial', 12, 'bold')).pack()
+
+        # Столбцы таблицы
+        columns = ("№", "Число")
+        
+        setattr(self, table_name, ttk.Treeview(frame, columns=columns, show="headings", height=5))
+        table = getattr(self, table_name)
+        
+        # Настройка заголовков
+        table.heading("№", text="№")
+        table.heading("Число", text="Число")
+        
+        # Настройка ширины столбцов
+        table.column("№", width=50)
+        table.column("Число", width=200)
+        table.pack(fill=tk.X)
+
+        # Метка для отображения количества чисел
+        setattr(self, label_name, tk.Label(frame, text="Всего чисел: "))
+        label = getattr(self, label_name)
+        label.pack()
+
+    def create_diff_text_field(self):
+        """Создание текстового поля для различий"""
+        self.frame_diff = tk.Frame(self.content_frame)
+        self.frame_diff.pack(pady=10, fill=tk.BOTH, expand=True)
+        
+        # Заголовок
+        tk.Label(self.frame_diff, text="Различия между тестами и статистика", font=('Arial', 12, 'bold')).pack()
+
+        # Текстовое поле с прокруткой
+        self.text_diff = tk.Text(self.frame_diff, height=15, wrap=tk.WORD)
+        self.scroll_diff = ttk.Scrollbar(self.frame_diff, command=self.text_diff.yview)
+        self.text_diff.configure(yscrollcommand=self.scroll_diff.set)
+        self.text_diff.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        self.scroll_diff.pack(side=tk.RIGHT, fill=tk.Y)
+
+    def setup_mouse_scroll(self):
+        """Настройка прокрутки колесом мыши"""
+        self.canvas.bind_all("<MouseWheel>", self._on_mousewheel)
 
 
-def fermat_test(n, iterations):
-    """Тест Ферма на простоту."""
-    if n < 2:
-        return False
-    if n == 2 or n == 3:  # Добавляем проверку для n=2 и n=3
-        return True
-    for _ in range(iterations):
-        a = random.randint(2, n - 1)
-        if pow(a, n - 1, n) != 1:
-            return False
-    return True
 
-def jacobi_symbol(a, n):
-    if n < 0 or n % 2 == 0:
-        return 0
-    a = a % n
-    result = 1
-    while a != 0:
-        while a % 2 == 0:
-            a = a // 2
-            mod = n % 8
-            if mod == 3 or mod == 5:
-                result = -result
-        a, n = n, a
-        if a % 4 == 3 and n % 4 == 3:
-            result = -result
-        a = a % n
-    if n == 1:
-        return result
-    else:
-        return 0
 
-def solovay_strassen_test(n, iterations):
-    """Тест Соловея-Штрассена на простоту."""
-    if n < 2:
-        return False
-    if n == 2 or n == 3:  # Добавляем проверку для n=2 и n=3
-        return True
-    if n % 2 == 0:
-        return False
-    for _ in range(iterations):
-        a = random.randint(2, n - 1)
-        x = pow(a, (n - 1) // 2, n)
-        if x == 0:
-            return False
-        if x != 1 and x != n - 1:
-            return False
-        jacobi = jacobi_symbol(a, n)
-        if x != jacobi % n:
-            return False
-    return True
 
-def miller_rabin_test(n, iterations):
-    """Тест Миллера-Рабина на простоту."""
-    if n < 2:
-        return False
-    if n == 2 or n == 3:  # Добавляем проверку для n=2 и n=3
-        return True
-    if n % 2 == 0:
-        return False
-    d = n - 1
-    s = 0
-    while d % 2 == 0:
-        d //= 2
-        s += 1
-    for _ in range(iterations):
-        a = random.randint(2, n - 1)
-        x = pow(a, d, n)
-        if x == 1 or x == n - 1:
-            continue
-        for __ in range(s - 1):
-            x = pow(x, 2, n)
-            if x == n - 1:
-                break
+
+
+
+
+
+    def start_test_thread(self):
+        """Запуск тестов в отдельном потоке"""
+        try:
+            # Получение значений из полей ввода
+            n = int(self.entry_n.get())
+            k = int(self.entry_k.get())
+        except ValueError:
+            messagebox.showerror("Ошибка", "Введите корректные числа")
+            return
+        
+        # Проверка корректности введенных значений
+        if n <= 1 or k <= 0:
+            messagebox.showerror("Ошибка", "n должно быть > 1, k должно быть > 0")
+            return
+        
+        # Очистка предыдущих результатов
+        self.clear_tables()
+        
+        # Отображение сообщения о начале тестов
+        self.text_diff.delete(1.0, tk.END)
+        self.text_diff.insert(tk.END, "Выполнение тестов...\n")
+        
+        # Блокировка кнопки на время выполнения
+        self.button_run.config(state=tk.DISABLED)
+        
+        # Запуск тестов в отдельном потоке
+        thread = Thread(target=self.run_tests, args=(n, k), daemon=True)
+        thread.start()
+
+    def clear_tables(self):
+        """Очистка таблиц перед новым запуском"""
+        for table in [self.table_fermat, self.table_solovay, self.table_miller]:
+            for row in table.get_children():
+                table.delete(row)
+
+    def run_tests(self, n, k):
+        """Основная функция выполнения тестов"""
+        try:
+            # Определение диапазона чисел для проверки
+            candidates = self.generate_candidates(n)
+            total = len(candidates)
+            
+            # Обновление прогресс-бара
+            self.update_progress(0, total)
+            
+            # Выполнение теста Ферма
+            fermat_primes = self.run_single_test(
+                test_func=self.fermat_test,
+                candidates=candidates,
+                iterations=k,
+                progress_range=(0, total//3),
+                total=total
+            )
+            self.update_results(
+                table=self.table_fermat,
+                label=self.label_fermat_count,
+                primes=fermat_primes
+            )
+            
+            # Выполнение теста Соловея-Штрассена
+            solovay_primes = self.run_single_test(
+                test_func=self.solovay_strassen_test,
+                candidates=candidates,
+                iterations=k,
+                progress_range=(total//3, 2*total//3),
+                total=total
+            )
+            self.update_results(
+                table=self.table_solovay,
+                label=self.label_solovay_count,
+                primes=solovay_primes
+            )
+            
+            # Выполнение теста Миллера-Рабина
+            miller_primes = self.run_single_test(
+                test_func=self.miller_rabin_test,
+                candidates=candidates,
+                iterations=k,
+                progress_range=(2*total//3, total),
+                total=total
+            )
+            self.update_results(
+                table=self.table_miller,
+                label=self.label_miller_count,
+                primes=miller_primes
+            )
+            
+            # Вычисление и вывод различий между тестами
+            self.calculate_differences(fermat_primes, solovay_primes, miller_primes, total)
+            
+        except Exception as e:
+            self.gui_queue.put(("error", str(e)))
+        finally:
+            # Завершение работы - разблокировка кнопки
+            self.gui_queue.put(("progress", 100))
+            self.gui_queue.put(("button_state", tk.NORMAL))
+
+
+
+    def generate_candidates(self, n):
+        """Генерация списка чисел для проверки"""
+        max_candidates = min(n, 10**30)  # Ограничение для производительности
+        
+        if n > 10**30:
+            # Для очень больших чисел проверяем только числа вокруг n
+            start = max(2, n - 1000)
+            return list(range(start, n + 1))
         else:
+            return list(range(2, max_candidates + 1))
+
+
+    def run_single_test(self, test_func, candidates, iterations, progress_range, total):
+        """Выполнение одного теста для всех чисел"""
+        primes = []
+        start, end = progress_range
+        
+        for i, c in enumerate(candidates):
+            if test_func(c, iterations):
+                primes.append(c)
+            
+            # Обновление прогресс-бара каждые 100 чисел
+            if i % 100 == 0:
+                progress = start + (end - start) * i // len(candidates)
+                self.update_progress(progress, total)
+        
+        return primes
+
+    def update_results(self, table, label, primes):
+        """Обновление результатов в интерфейсе"""
+        self.update_table(table, primes)
+        self.update_label(label, f"Всего чисел: {len(primes)}")
+
+    def calculate_differences(self, fermat_primes, solovay_primes, miller_primes, total_candidates):
+        """Вычисление различий между результатами тестов"""
+        # Вычисление различных множест
+        diff_fermat_miller = sorted(set(fermat_primes) - set(miller_primes))
+        diff_solovay_miller = sorted(set(solovay_primes) - set(miller_primes))
+        diff_fermat_solovay = sorted(set(fermat_primes) - set(solovay_primes))
+        
+        
+        # Формирование текста с результатами
+        text = self.build_results_text(
+            total_candidates,
+            len(fermat_primes),
+            len(solovay_primes),
+            len(miller_primes),
+            diff_fermat_miller,
+            diff_solovay_miller,
+            diff_fermat_solovay,
+        )
+        
+        # Отправка текста в очередь для обновления GUI
+        self.gui_queue.put(("update_text", text))
+
+    def build_results_text(self, total, f_count, s_count, m_count, diff_fm, diff_sm, diff_fs):
+        """Формирование текста с результатами"""
+        text = "РАЗНИЦА МЕЖДУ ТАБЛИЦАМИ:\n\n"
+        text += f"1. В Ферма, но не в Соловее: {diff_fs}\n"
+        text += f"2. В Ферма, но не в Миллере: {diff_fm}\n"
+        text += f"3. В Соловее, но не в Миллере: {diff_sm}\n"
+        
+        text += "СТАТИСТИКА:\n"
+        text += f"- Всего проверено чисел: {total}\n"
+        text += f"- Найдено простых (Ферма): {f_count}\n"
+        text += f"- Найдено простых (Соловей): {s_count}\n"
+        text += f"- Найдено простых (Миллер): {m_count}\n"
+        
+        return text
+
+    def check_queue(self):
+        """Проверка очереди обновлений GUI"""
+        try:
+            while True:
+                task = self.gui_queue.get_nowait()
+                if task[0] == "update_table":
+                    self.update_table(task[1], task[2])
+                elif task[0] == "update_label":
+                    task[1].config(text=task[2])
+                elif task[0] == "progress":
+                    self.progress['value'] = task[1]
+                elif task[0] == "update_text":
+                    self.text_diff.delete(1.0, tk.END)
+                    self.text_diff.insert(tk.END, task[1])
+                elif task[0] == "button_state":
+                    self.button_run.config(state=task[1])
+                elif task[0] == "error":
+                    messagebox.showerror("Ошибка", task[1])
+        except:
+            pass
+        finally:
+            # Планирование следующей проверки очереди
+            self.root.after(100, self.check_queue)
+
+    def update_table(self, table, data):
+        """Обновление данных в таблице"""
+        for row in table.get_children():
+            table.delete(row)
+        for i, num in enumerate(data):
+            table.insert("", "end", values=(i + 1, num))
+
+    def update_label(self, label, text):
+        """Обновление текста метки"""
+        label.config(text=text)
+
+    def update_progress(self, value, maximum):
+        """Обновление прогресс-бара"""
+        percent = int(100 * value / maximum)
+        self.gui_queue.put(("progress", percent))
+
+    def _on_mousewheel(self, event):
+        """Обработчик прокрутки колесом мыши"""
+        self.canvas.yview_scroll(int(-1*(event.delta/120)), "units")
+
+
+
+
+
+
+
+
+
+
+
+
+
+    # Методы тестирования простоты чисел
+    def fermat_test(self, n, iterations):
+        """Тест Ферма на простоту"""
+        if n < 2:
             return False
-    return True
+        if n in (2, 3):  # 2 и 3 - простые числа
+            return True
+        if n % 2 == 0:  # Четные числа > 2 - составные
+            return False
+        
+        # Оптимальное количество итераций (не более 20)
+        k = min(iterations, 20)
+        
+        for _ in range(k):
+            a = random.randint(2, n - 2)
+            if pow(a, n - 1, n) != 1:  # Малая теорема Ферма
+                return False
+        return True
 
-def run_tests():
-    try:
-        n = int(entry_n.get())
-        k = int(entry_k.get())
-    except ValueError:
-        messagebox.showerror("Ошибка", "Введите корректные числа")
-        return
+    def solovay_strassen_test(self, n, iterations):
+        """Тест Соловея-Штрассена на простоту"""
+        if n < 2:
+            return False
+        if n == 2:  # 2 - простое число
+            return True
+        if n % 2 == 0:  # Четные числа > 2 - составные
+            return False
+        
+        k = min(iterations, 20)
+        
+        for _ in range(k):
+            a = random.randint(2, n - 1)
+            x = pow(a, (n - 1) // 2, n)
+            if x == 0 or (x != 1 and x != n - 1):
+                return False
+            jacobi = self.jacobi_symbol(a, n)
+            if x != jacobi % n:
+                return False
+        return True
+
+    def miller_rabin_test(self, n, iterations):
+        """Тест Миллера-Рабина на простоту"""
+        if n < 2:
+            return False
+        if n in (2, 3):  # 2 и 3 - простые числа
+            return True
+        if n % 2 == 0:  # Четные числа > 2 - составные
+            return False
+        
+        k = min(iterations, 20)
+        
+        # Представление n-1 в виде d*2^s
+        d = n - 1
+        s = 0
+        while d % 2 == 0:
+            d //= 2
+            s += 1
+        
+        for _ in range(k):
+            a = random.randint(2, n - 2)
+            x = pow(a, d, n)
+            if x == 1 or x == n - 1:
+                continue
+            for __ in range(s - 1):
+                x = pow(x, 2, n)
+                if x == n - 1:
+                    break
+            else:
+                return False
+        return True
+
+    def jacobi_symbol(self, a, n):
+        """Вычисление символа Якоби (рекурсивная реализация)"""
+        if n == 1:
+            return 1
+        if a == 0:
+            return 0
+        if a == 1:
+            return 1
+        if a == 2:
+            # Специальный случай для a = 2
+            if n % 8 in (1, 7):
+                return 1
+            elif n % 8 in (3, 5):
+                return -1
+        if a >= n:
+            # Редукция по модулю n
+            return self.jacobi_symbol(a % n, n)
+        if a % 2 == 0:
+            # Разложение на множители
+            return self.jacobi_symbol(2, n) * self.jacobi_symbol(a // 2, n)
+        if a % 4 == 3 and n % 4 == 3:
+            # Квадратичный закон взаимности
+            return -self.jacobi_symbol(n, a)
+        else:
+            return self.jacobi_symbol(n, a)
+
+
+
+
+
+
+
+
+
+
+
+
+
+if __name__ == "__main__":
+    # Создание и запуск главного окна приложения
+    root = tk.Tk()
+    app = PrimeTesterApp(root)
+    root.mainloop()
     
-    if n <= 1 or k <= 0:
-        messagebox.showerror("Ошибка", "n должно быть > 1, k должно быть > 0")
-        return
     
-    max_candidates = min(n, 1000000000000000000000000000000)  # Ограничиваем количество кандидатов для производительности
-    candidates = list(range(2, max_candidates + 1))
     
-    # Тест Ферма
-    fermat_primes = [c for c in candidates if fermat_test(c, k)]
-    update_table(table_fermat, fermat_primes)
     
-    # Тест Соловея-Штрассена
-    solovay_primes = [c for c in fermat_primes if solovay_strassen_test(c, k)]
-    update_table(table_solovay, solovay_primes)
     
-    # Тест Миллера-Рабина
-    miller_primes = [c for c in solovay_primes if miller_rabin_test(c, k)]
-    update_table(table_miller, miller_primes)
     
-    # Разница между Ферма и Соловеем
-    diff_fermat_solovay = list(set(fermat_primes) - set(solovay_primes)) + list(set(solovay_primes) - set(fermat_primes))
-    label_diff_fermat_solovay.config(text=f"Числа только в Ферма или только в Соловее: {sorted(diff_fermat_solovay)}")
-    
-    # Разница между всеми тремя
-    diff_all = list(set(fermat_primes) - set(miller_primes)) + list(set(solovay_primes) - set(miller_primes))
-    label_diff_all.config(text=f"Числа в Ферма или Соловее, но не в Миллере: {sorted(diff_all)}")
-
-def update_table(table, data):
-    for row in table.get_children():
-        table.delete(row)
-    for i, num in enumerate(data):
-        table.insert("", "end", values=(i + 1, num))
-
-# Создание графического интерфейса
-root = tk.Tk()
-root.title("Тесты простоты чисел")
-root.geometry("1000x800")
-
-frame_input = tk.Frame(root)
-frame_input.pack(pady=10)
-
-tk.Label(frame_input, text="Число n:").grid(row=0, column=0, padx=5)
-entry_n = tk.Entry(frame_input)
-entry_n.grid(row=0, column=1, padx=5)
-
-tk.Label(frame_input, text="Количество итераций k:").grid(row=0, column=2, padx=5)
-entry_k = tk.Entry(frame_input)
-entry_k.grid(row=0, column=3, padx=5)
-
-button_run = tk.Button(frame_input, text="Запустить тесты", command=run_tests)
-button_run.grid(row=0, column=4, padx=5)
-
-# Таблица Ферма
-frame_fermat = tk.Frame(root)
-frame_fermat.pack(pady=10)
-tk.Label(frame_fermat, text="Тест Ферма", font=('Arial', 12, 'bold')).pack()
-
-columns = ("№", "Число")
-table_fermat = ttk.Treeview(frame_fermat, columns=columns, show="headings", height=5)
-table_fermat.heading("№", text="№")
-table_fermat.heading("Число", text="Число")
-table_fermat.column("№", width=50)
-table_fermat.column("Число", width=1000)
-table_fermat.pack()
-
-# Таблица Соловея-Штрассена
-frame_solovay = tk.Frame(root)
-frame_solovay.pack(pady=10)
-tk.Label(frame_solovay, text="Тест Соловея-Штрассена", font=('Arial', 12, 'bold')).pack()
-
-table_solovay = ttk.Treeview(frame_solovay, columns=columns, show="headings", height=5)
-table_solovay.heading("№", text="№")
-table_solovay.heading("Число", text="Число")
-table_solovay.column("№", width=50)
-table_solovay.column("Число", width=1000)
-table_solovay.pack()
-
-label_diff_fermat_solovay = tk.Label(root, text="", wraplength=900)
-label_diff_fermat_solovay.pack()
-
-# Таблица Миллера-Рабина
-frame_miller = tk.Frame(root)
-frame_miller.pack(pady=10)
-tk.Label(frame_miller, text="Тест Миллера-Рабина", font=('Arial', 12, 'bold')).pack()
-
-table_miller = ttk.Treeview(frame_miller, columns=columns, show="headings", height=5)
-table_miller.heading("№", text="№")
-table_miller.heading("Число", text="Число")
-table_miller.column("№", width=50)
-table_miller.column("Число", width=1000)
-table_miller.pack()
-
-label_diff_all = tk.Label(root, text="", wraplength=900)
-label_diff_all.pack()
-
-root.mainloop()
